@@ -1,0 +1,20 @@
+[package]
+name = "tuya-lan-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Tuya LAN protocol 3.4/3.5 implementation in Rust (pure std or ESP32)"
+license = "MIT"
+repository = "https://github.com/munibesen/tuya-lan-rs"
+
+[features]
+default = []
+esp = ["dep:esp-idf-sys"]
+
+[dependencies]
+aes = "0.8"
+aes-gcm = "0.10"
+hmac = "0.12"
+sha2 = "0.10"
+serde_json = "1"
+log = "0.4"
+esp-idf-sys = { version = "0.34", optional = true }
