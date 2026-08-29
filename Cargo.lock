@@ -1159,7 +1159,6 @@ dependencies = [
  "esp-idf-sys",
  "hmac",
  "log",
- "serde_json",
  "sha2",
 ]
 

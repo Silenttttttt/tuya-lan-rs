@@ -1,4 +1,4 @@
-/// Tuya LAN protocol constants and message framing.
+//! Tuya LAN protocol constants and message framing.
 
 // Headers
 pub const HEAD_55: [u8; 4] = [0x00, 0x00, 0x55, 0xAA];
@@ -10,8 +10,7 @@ pub const SUF_35: [u8; 4] = [0x00, 0x00, 0x99, 0x66];
 
 // Fixed local nonce ("0123456789abcdef")
 pub const LOCAL_NONCE: [u8; 16] = [
-    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65,
-    0x66,
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
 ];
 
 // Commands
@@ -119,7 +118,11 @@ fn parse_response_34(pkt: &[u8], session_key: &[u8; 16]) -> Option<(u8, String)>
 
 fn extract_json(data: &[u8]) -> String {
     let start = data.iter().position(|&b| b == b'{').unwrap_or(data.len());
-    let end = data.iter().rposition(|&b| b == b'}').map(|p| p + 1).unwrap_or(start);
+    let end = data
+        .iter()
+        .rposition(|&b| b == b'}')
+        .map(|p| p + 1)
+        .unwrap_or(start);
     if start < end {
         String::from_utf8_lossy(&data[start..end]).to_string()
     } else {

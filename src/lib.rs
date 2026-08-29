@@ -3,8 +3,8 @@ mod protocol;
 mod session;
 
 use log::warn;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
 
 /// Lamp state visible to the rest of the app.
 #[derive(Clone, Copy, Debug, Default)]
@@ -31,7 +31,12 @@ impl TuyaLamp {
     /// - `port`: typically 6668
     /// - `version`: 4 for protocol 3.4, 5 for protocol 3.5
     pub fn new(key: [u8; 16], ip: [u8; 4], port: u16, version: u8) -> Self {
-        Self { key, ip, port, version }
+        Self {
+            key,
+            ip,
+            port,
+            version,
+        }
     }
 
     /// Query the lamp's current power state from DPS key 20.
@@ -65,12 +70,14 @@ impl TuyaLamp {
 
     /// Warm white, minimum brightness (DPS 20=on, 21=white, 22=10, 23=0).
     pub fn set_warm_dim(&self) -> Option<bool> {
-        self.send_dps(r#""20":true,"21":"white","22":10,"23":0"#).map(|_| true)
+        self.send_dps(r#""20":true,"21":"white","22":10,"23":0"#)
+            .map(|_| true)
     }
 
     /// Cool white, maximum brightness (DPS 20=on, 21=white, 22=1000, 23=1000).
     pub fn set_bright_white(&self) -> Option<bool> {
-        self.send_dps(r#""20":true,"21":"white","22":1000,"23":1000"#).map(|_| true)
+        self.send_dps(r#""20":true,"21":"white","22":1000,"23":1000"#)
+            .map(|_| true)
     }
 
     fn send_dps(&self, dps_inner: &str) -> Option<()> {
@@ -80,23 +87,41 @@ impl TuyaLamp {
                     warn!("[tuya] key negotiation failed");
                     return None;
                 }
-                if sess.send_dps_command(dps_inner) { Some(()) } else {
+                if sess.send_dps_command(dps_inner) {
+                    Some(())
+                } else {
                     warn!("[tuya] command failed");
                     None
                 }
             }
-            Err(e) => { warn!("[tuya] connect failed: {e}"); None }
+            Err(e) => {
+                warn!("[tuya] connect failed: {e}");
+                None
+            }
         }
     }
 }
 
+/// Finds the value of DPS key 20 (on/off) directly in the raw JSON string, without a general
+/// JSON parser. The only thing ever read from a device's response is this one boolean field, at
+/// either `dps.20` or `data.dps.20` -- a full parse tree for that is real dead weight on an
+/// embedded target. A substring search for `"20":` works for both shapes without needing to
+/// distinguish them, matching the manual byte/string scanning this crate already does elsewhere
+/// (see `extract_json` in protocol.rs). Accepts `true`/`false` or a number (nonzero = true), the
+/// two forms Tuya devices actually send.
 fn parse_dps20(json: &str) -> Option<bool> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    let dps20 = v
-        .get("dps")
-        .and_then(|d| d.get("20"))
-        .or_else(|| v.get("data").and_then(|d| d.get("dps")).and_then(|d| d.get("20")));
-    dps20.and_then(|v| v.as_bool().or_else(|| v.as_i64().map(|i| i != 0)))
+    let after = json.find("\"20\":")?;
+    let rest = json[after + 5..].trim_start();
+    if rest.starts_with("true") {
+        Some(true)
+    } else if rest.starts_with("false") {
+        Some(false)
+    } else {
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        rest.get(..end)?.parse::<i64>().ok().map(|n| n != 0)
+    }
 }
 
 /// Thread-safe lamp controller with queued targets and retry/suppress logic.
@@ -125,7 +150,11 @@ impl LampHandle {
     pub fn flip_target(&self, current_displayed_on: bool) -> bool {
         let mut t = self.target.lock().unwrap();
         *t = if *t == 0 {
-            if current_displayed_on { -1 } else { 1 }
+            if current_displayed_on {
+                -1
+            } else {
+                1
+            }
         } else if *t > 0 {
             -1
         } else {
@@ -134,27 +163,32 @@ impl LampHandle {
         let want_on = *t > 0;
         drop(t);
         self.retry_after_ms.store(0, Ordering::Relaxed);
-        self.suppress_until_ms.store(now_ms().wrapping_add(10_000), Ordering::Relaxed);
+        self.suppress_until_ms
+            .store(now_ms().wrapping_add(10_000), Ordering::Relaxed);
         want_on
     }
 
     pub fn queue_warm_dim(&self) {
         *self.target.lock().unwrap() = 2;
         self.retry_after_ms.store(0, Ordering::Relaxed);
-        self.suppress_until_ms.store(now_ms().wrapping_add(10_000), Ordering::Relaxed);
+        self.suppress_until_ms
+            .store(now_ms().wrapping_add(10_000), Ordering::Relaxed);
     }
 
     pub fn queue_bright_white(&self) {
         *self.target.lock().unwrap() = 3;
         self.retry_after_ms.store(0, Ordering::Relaxed);
-        self.suppress_until_ms.store(now_ms().wrapping_add(10_000), Ordering::Relaxed);
+        self.suppress_until_ms
+            .store(now_ms().wrapping_add(10_000), Ordering::Relaxed);
     }
 
     /// Execute any pending target command. Call this from a background thread.
     /// Returns true when a command completes and state changed.
     pub fn poll(&self) -> bool {
         let target = *self.target.lock().unwrap();
-        if target == 0 { return false; }
+        if target == 0 {
+            return false;
+        }
 
         let now = now_ms();
         let retry_at = self.retry_after_ms.load(Ordering::Relaxed);
@@ -163,11 +197,11 @@ impl LampHandle {
         }
 
         let result = match target {
-             1 => self.lamp.set_on(true),
+            1 => self.lamp.set_on(true),
             -1 => self.lamp.set_on(false),
-             2 => self.lamp.set_warm_dim(),
-             3 => self.lamp.set_bright_white(),
-             _ => return false,
+            2 => self.lamp.set_warm_dim(),
+            3 => self.lamp.set_bright_white(),
+            _ => return false,
         };
 
         if let Some(actual_on) = result {
@@ -177,15 +211,19 @@ impl LampHandle {
             drop(st);
 
             let mut t = self.target.lock().unwrap();
-            if *t == target { *t = 0; }
+            if *t == target {
+                *t = 0;
+            }
             drop(t);
 
             self.retry_after_ms.store(0, Ordering::Relaxed);
-            self.suppress_until_ms.store(now_ms().wrapping_add(5_000), Ordering::Relaxed);
+            self.suppress_until_ms
+                .store(now_ms().wrapping_add(5_000), Ordering::Relaxed);
             return true;
         }
 
-        self.retry_after_ms.store(now_ms().wrapping_add(5_000), Ordering::Relaxed);
+        self.retry_after_ms
+            .store(now_ms().wrapping_add(5_000), Ordering::Relaxed);
         false
     }
 
@@ -193,7 +231,10 @@ impl LampHandle {
     pub fn display_state(&self) -> LampState {
         let target = *self.target.lock().unwrap();
         if target != 0 {
-            LampState { on: target > 0, known: true }
+            LampState {
+                on: target > 0,
+                known: true,
+            }
         } else {
             *self.state.lock().unwrap()
         }
@@ -225,4 +266,52 @@ fn now_ms() -> u32 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_dps20_true_at_top_level() {
+        assert_eq!(
+            parse_dps20(r#"{"dps":{"20":true,"21":"white"}}"#),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn parse_dps20_false_at_top_level() {
+        assert_eq!(parse_dps20(r#"{"dps":{"20":false}}"#), Some(false));
+    }
+
+    #[test]
+    fn parse_dps20_nested_under_data() {
+        assert_eq!(parse_dps20(r#"{"data":{"dps":{"20":true}}}"#), Some(true));
+    }
+
+    #[test]
+    fn parse_dps20_numeric_forms() {
+        assert_eq!(parse_dps20(r#"{"dps":{"20":1}}"#), Some(true));
+        assert_eq!(parse_dps20(r#"{"dps":{"20":0}}"#), Some(false));
+    }
+
+    #[test]
+    fn parse_dps20_real_device_shape() {
+        // A real response captured from an actual device (see tests/live_lamp.rs) -- other DPS
+        // keys present, "20" not first, no whitespace after the colon.
+        let json = r#"{"dps":{"20":true,"21":"white","22":10,"23":0,"24":"014003e803e8"}}"#;
+        assert_eq!(parse_dps20(json), Some(true));
+    }
+
+    #[test]
+    fn parse_dps20_missing_key_returns_none() {
+        assert_eq!(parse_dps20(r#"{"dps":{"21":"white"}}"#), None);
+    }
+
+    #[test]
+    fn parse_dps20_malformed_json_returns_none() {
+        assert_eq!(parse_dps20("not json at all"), None);
+        assert_eq!(parse_dps20(""), None);
+    }
 }

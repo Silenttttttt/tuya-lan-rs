@@ -25,11 +25,8 @@ impl Session {
         let addr = Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]);
         info!("[tuya] connecting to {}:{}", addr, port);
 
-        let stream = TcpStream::connect_timeout(
-            &(addr, port).into(),
-            Duration::from_secs(4),
-        )
-        .map_err(|e| format!("TCP connect: {e}"))?;
+        let stream = TcpStream::connect_timeout(&(addr, port).into(), Duration::from_secs(4))
+            .map_err(|e| format!("TCP connect: {e}"))?;
 
         stream.set_read_timeout(Some(Duration::from_secs(4))).ok();
         stream.set_write_timeout(Some(Duration::from_secs(4))).ok();
@@ -69,14 +66,26 @@ impl Session {
         self.send_command(CMD_STATUS, b"{}")?;
         let raw = self.receive_raw();
         match &raw {
-            Some(r) => info!("[tuya] status rx {} bytes: {:02x?}", r.len(), &r[..r.len().min(48)]),
-            None    => info!("[tuya] status rx: timeout"),
+            Some(r) => info!(
+                "[tuya] status rx {} bytes: {:02x?}",
+                r.len(),
+                &r[..r.len().min(48)]
+            ),
+            None => info!("[tuya] status rx: timeout"),
         }
         let raw = raw?;
         match protocol::parse_response(&raw, &self.session_key) {
             Some((cmd, json)) => {
-                info!("[tuya] status parsed cmd={:#04x} json={:?}", cmd, &json[..json.len().min(80)]);
-                if json.is_empty() { None } else { Some(json) }
+                info!(
+                    "[tuya] status parsed cmd={:#04x} json={:?}",
+                    cmd,
+                    &json[..json.len().min(80)]
+                );
+                if json.is_empty() {
+                    None
+                } else {
+                    Some(json)
+                }
             }
             None => {
                 info!("[tuya] status parse failed");
@@ -113,21 +122,35 @@ impl Session {
         if self.version >= 5 {
             let mut iv = [0u8; 12];
             iv.copy_from_slice(&LOCAL_NONCE[..12]);
-            let msg = protocol::build_msg_35(self.seq, CMD_NEGOTIATE, &self.device_key, &iv, &LOCAL_NONCE)?;
+            let msg = protocol::build_msg_35(
+                self.seq,
+                CMD_NEGOTIATE,
+                &self.device_key,
+                &iv,
+                &LOCAL_NONCE,
+            )?;
             self.seq += 1;
-            info!("[tuya] tx {} bytes: {:02x?}", msg.len(), &msg[..msg.len().min(32)]);
+            info!(
+                "[tuya] tx {} bytes: {:02x?}",
+                msg.len(),
+                &msg[..msg.len().min(32)]
+            );
             self.stream.write_all(&msg).ok()?;
 
             let response = self.receive_raw();
             match &response {
-                Some(r) => info!("[tuya] rx {} bytes: {:02x?}", r.len(), &r[..r.len().min(32)]),
-                None    => info!("[tuya] rx: timeout"),
+                Some(r) => info!(
+                    "[tuya] rx {} bytes: {:02x?}",
+                    r.len(),
+                    &r[..r.len().min(32)]
+                ),
+                None => info!("[tuya] rx: timeout"),
             }
             self.parse_35_nonce(&response?)
         } else {
             let mut padded = LOCAL_NONCE;
             crypto::aes_ecb_encrypt(&mut padded, &self.device_key);
-            let msg = self.build_msg_34(CMD_NEGOTIATE, &padded);
+            let msg = build_msg_34(self.seq, CMD_NEGOTIATE, &padded);
             self.seq += 1;
             self.stream.write_all(&msg).ok()?;
 
@@ -166,7 +189,8 @@ impl Session {
         if enc_end <= enc_start || enc_end > pkt.len() {
             return None;
         }
-        let decrypted = crypto::aes_gcm_decrypt(&pkt[enc_start..enc_end], &self.device_key, &iv, aad)?;
+        let decrypted =
+            crypto::aes_gcm_decrypt(&pkt[enc_start..enc_end], &self.device_key, &iv, aad)?;
         if decrypted.len() < 20 {
             return None;
         }
@@ -181,7 +205,9 @@ impl Session {
         if self.version >= 5 {
             let mut iv = [0u8; 12];
             iv.copy_from_slice(&LOCAL_NONCE[..12]);
-            if let Some(msg) = protocol::build_msg_35(self.seq, CMD_NEGOTIATE_FINISH, &self.device_key, &iv, &hmac) {
+            if let Some(msg) =
+                protocol::build_msg_35(self.seq, CMD_NEGOTIATE_FINISH, &self.device_key, &iv, &hmac)
+            {
                 self.seq += 1;
                 let _ = self.stream.write_all(&msg);
             }
@@ -189,7 +215,7 @@ impl Session {
             let mut padded = [0x10u8; 48];
             padded[..32].copy_from_slice(&hmac);
             crypto::aes_ecb_encrypt(&mut padded, &self.device_key);
-            let msg = self.build_msg_34(CMD_NEGOTIATE_FINISH, &padded);
+            let msg = build_msg_34(self.seq, CMD_NEGOTIATE_FINISH, &padded);
             self.seq += 1;
             let _ = self.stream.write_all(&msg);
         }
@@ -210,7 +236,7 @@ impl Session {
             let mut padded = payload.to_vec();
             padded.resize(payload.len() + pad_len, pad_len as u8);
             crypto::aes_ecb_encrypt(&mut padded, &self.session_key);
-            let msg = self.build_msg_34(cmd, &padded);
+            let msg = build_msg_34(self.seq, cmd, &padded);
             self.seq += 1;
             self.stream.write_all(&msg).ok()
         }
@@ -225,30 +251,40 @@ impl Session {
                 Ok(0) => break,
                 Ok(n) => {
                     total.extend_from_slice(&buf[..n]);
-                    self.stream.set_read_timeout(Some(Duration::from_millis(100))).ok();
+                    self.stream
+                        .set_read_timeout(Some(Duration::from_millis(100)))
+                        .ok();
                 }
                 Err(_) => break,
             }
         }
 
-        self.stream.set_read_timeout(Some(Duration::from_secs(4))).ok();
+        self.stream
+            .set_read_timeout(Some(Duration::from_secs(4)))
+            .ok();
 
-        if total.is_empty() { None } else { Some(total) }
+        if total.is_empty() {
+            None
+        } else {
+            Some(total)
+        }
     }
+}
 
-    fn build_msg_34(&self, cmd: u8, encrypted_payload: &[u8]) -> Vec<u8> {
-        let data_len = encrypted_payload.len() + 4 + 4;
-        let mut msg = Vec::with_capacity(16 + encrypted_payload.len() + 8);
-        msg.extend_from_slice(&HEAD_55);
-        msg.extend_from_slice(&self.seq.to_be_bytes());
-        msg.extend_from_slice(&[0x00, 0x00, 0x00, cmd]);
-        msg.extend_from_slice(&(data_len as u32).to_be_bytes());
-        msg.extend_from_slice(encrypted_payload);
-        let crc = crc32(&msg);
-        msg.extend_from_slice(&crc.to_be_bytes());
-        msg.extend_from_slice(&SUF_34);
-        msg
-    }
+/// Only depends on `seq` (not `self`) -- a free function so it's directly unit-testable without
+/// constructing a `Session` (which otherwise needs a real `TcpStream`).
+fn build_msg_34(seq: u32, cmd: u8, encrypted_payload: &[u8]) -> Vec<u8> {
+    let data_len = encrypted_payload.len() + 4 + 4;
+    let mut msg = Vec::with_capacity(16 + encrypted_payload.len() + 8);
+    msg.extend_from_slice(&HEAD_55);
+    msg.extend_from_slice(&seq.to_be_bytes());
+    msg.extend_from_slice(&[0x00, 0x00, 0x00, cmd]);
+    msg.extend_from_slice(&(data_len as u32).to_be_bytes());
+    msg.extend_from_slice(encrypted_payload);
+    let crc = crc32(&msg);
+    msg.extend_from_slice(&crc.to_be_bytes());
+    msg.extend_from_slice(&SUF_34);
+    msg
 }
 
 #[cfg(feature = "esp")]
@@ -264,17 +300,98 @@ fn unix_secs() -> u64 {
         .as_secs()
 }
 
+// Precomputed at compile time (const-evaluated, costs nothing at runtime) -- turns CRC32 from
+// 8 conditional bit-shifts per byte into 1 table lookup per byte. Only used on the protocol 3.4
+// path (every outgoing 3.5 message uses AES-GCM's own tag instead), but 3.4 devices still exist
+// and this is the same real CPU-vs-1KiB-flash trade every standard CRC32 implementation makes.
+const CRC32_TABLE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let mut crc = i as u32;
+        let mut j = 0;
+        while j < 8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xEDB88320
+            } else {
+                crc >> 1
+            };
+            j += 1;
+        }
+        table[i] = crc;
+        i += 1;
+    }
+    table
+};
+
 fn crc32(data: &[u8]) -> u32 {
     let mut crc: u32 = 0xFFFFFFFF;
     for &b in data {
-        crc ^= b as u32;
-        for _ in 0..8 {
-            if crc & 1 != 0 {
-                crc = (crc >> 1) ^ 0xEDB88320;
-            } else {
-                crc >>= 1;
-            }
-        }
+        let idx = ((crc ^ b as u32) & 0xFF) as usize;
+        crc = (crc >> 8) ^ CRC32_TABLE[idx];
     }
     !crc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crc32_matches_standard_test_vector() {
+        // The canonical CRC-32/ISO-HDLC ("zlib crc32") check value for the ASCII string
+        // "123456789" -- same algorithm this crate implements (poly 0xEDB88320, init
+        // 0xFFFFFFFF, final XOR). If this ever fails, the table generation is wrong.
+        assert_eq!(crc32(b"123456789"), 0xCBF43926);
+    }
+
+    #[test]
+    fn crc32_empty_input() {
+        assert_eq!(crc32(b""), 0x00000000);
+    }
+
+    #[test]
+    fn build_msg_34_frame_layout_and_crc_are_self_consistent() {
+        let payload = [0xAAu8; 16];
+        let msg = build_msg_34(7, CMD_CONTROL, &payload);
+
+        assert_eq!(
+            &msg[0..4],
+            &HEAD_55,
+            "frame must start with the 55AA header"
+        );
+        assert_eq!(
+            &msg[4..8],
+            &7u32.to_be_bytes(),
+            "seq must be encoded big-endian"
+        );
+        assert_eq!(
+            &msg[8..12],
+            &[0x00, 0x00, 0x00, CMD_CONTROL],
+            "cmd byte in the right slot"
+        );
+        let data_len = u32::from_be_bytes(msg[12..16].try_into().unwrap()) as usize;
+        assert_eq!(
+            data_len,
+            payload.len() + 8,
+            "data_len = payload + crc(4) + suffix(4)"
+        );
+        assert_eq!(
+            &msg[16..16 + payload.len()],
+            &payload,
+            "payload copied verbatim"
+        );
+
+        // The CRC covers everything before the CRC field itself -- recomputing it the same way
+        // must reproduce exactly what build_msg_34 wrote, the same check a real device applies.
+        let crc_offset = 16 + payload.len();
+        let stored_crc = u32::from_be_bytes(msg[crc_offset..crc_offset + 4].try_into().unwrap());
+        assert_eq!(stored_crc, crc32(&msg[..crc_offset]));
+
+        assert_eq!(
+            &msg[msg.len() - 4..],
+            &SUF_34,
+            "frame must end with the AA55 suffix"
+        );
+    }
 }
